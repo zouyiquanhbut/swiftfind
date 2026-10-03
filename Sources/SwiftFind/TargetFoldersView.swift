@@ -32,7 +32,7 @@ struct TargetFoldersView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(18)
-                .onDrop(of: [swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier], isTargeted: .constant(false)) { providers in
+                .onDrop(of: [swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier], isTargeted: .constant(false)) { providers in
                     organizer.addTargetFromProviders(providers)
                     return true
                 }
@@ -49,10 +49,11 @@ struct TargetFoldersView: View {
                     .padding(10)
                     Spacer(minLength: 80)
                 }
-                .onDrop(of: [swiftFindTargetReorderType], isTargeted: Binding(
+                .onDrop(of: [swiftFindTargetReorderType, swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier], isTargeted: Binding(
                     get: { organizer.targetDropIndex == organizer.targets.count },
                     set: { isTargeted in organizer.setTargetDropIndex(isTargeted ? organizer.targets.count : nil) }
                 )) { providers in
+                    organizer.setTargetDropIndex(nil)
                     organizer.handleTargetAreaDrop(providers, position: organizer.targets.count, target: nil)
                     return true
                 }

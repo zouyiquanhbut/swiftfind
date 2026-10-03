@@ -39,17 +39,22 @@ final class FileOrganizer: ObservableObject {
         }
         let identifiers = [swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier]
         guard let identifier = identifiers.first(where: provider.hasItemConformingToTypeIdentifier) else { return }
-        if identifier == swiftFindPathType {
-            provider.loadDataRepresentation(forTypeIdentifier: identifier) { [weak self] data, _ in
-                guard let data else { return }
-                let path = String(decoding: data, as: UTF8.self)
-                DispatchQueue.main.async { self?.addTarget(url: URL(fileURLWithPath: path)) }
+        provider.loadDataRepresentation(forTypeIdentifier: identifier) { [weak self] data, _ in
+            guard let data else { return }
+            let url: URL?
+            if identifier == swiftFindPathType {
+                let path = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                url = path.hasPrefix("/") ? URL(fileURLWithPath: path) : nil
+            } else if let parsed = URL(dataRepresentation: data, relativeTo: nil), parsed.isFileURL {
+                url = parsed
+            } else {
+                let text = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let parsed = URL(string: text), parsed.isFileURL { url = parsed }
+                else if text.hasPrefix("/") { url = URL(fileURLWithPath: text) }
+                else { url = nil }
             }
-        } else {
-            provider.loadDataRepresentation(forTypeIdentifier: identifier) { [weak self] data, _ in
-                guard let data, let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
-                DispatchQueue.main.async { self?.addTarget(url: url) }
-            }
+            guard let url else { return }
+            DispatchQueue.main.async { self?.addTarget(url: url) }
         }
     }
 
