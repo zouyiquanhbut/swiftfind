@@ -13,6 +13,8 @@ final class Indexer: ObservableObject {
     private var watcher: FSEventsWatcher?
     private var watchedRoots: [URL] = []
     private var scopedRoots: [URL] = []
+    private var pendingEvents: [String: FSEventStreamEventFlags] = [:]
+    private var pendingFlushWork: DispatchWorkItem?
     private let bookmarkKey = "SwiftFind.indexRoots"
 
     init(database: Database) {
@@ -106,6 +108,39 @@ final class Indexer: ObservableObject {
         }
     }
 
+    /// Add content from folders that are not part of the selected index roots.
+    /// This is used for persistent target folders and for newly moved items.
+    func indexAdditional(urls: [URL], recursive: Bool = true) {
+        let uniqueURLs = Array(Set(urls.map { $0.standardizedFileURL }))
+        guard !uniqueURLs.isEmpty else { return }
+        worker.async { [weak self] in
+            guard let self else { return }
+            let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .nameKey, .volumeNameKey]
+            var records: [FileRecord] = []
+            for url in uniqueURLs {
+                if let record = self.makeRecord(url: url, keys: keys) { records.append(record) }
+                guard let values = try? url.resourceValues(forKeys: keys), values.isDirectory == true else { continue }
+                if recursive {
+                    guard let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) else { continue }
+                    for case let child as URL in enumerator {
+                        autoreleasepool {
+                            if let record = self.makeRecord(url: child, keys: keys) { records.append(record) }
+                        }
+                    }
+                } else if let children = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) {
+                    for child in children {
+                        if let record = self.makeRecord(url: child, keys: keys) { records.append(record) }
+                    }
+                }
+            }
+            guard !records.isEmpty else { return }
+            guard (try? self.database.upsertFileRows(records)) != nil else { return }
+            DispatchQueue.main.async {
+                NotificationCenter.default.post(name: .swiftFindIndexDidChange, object: nil, userInfo: ["indexedDestinationPaths": true])
+            }
+        }
+    }
+
     deinit { scopedRoots.forEach { $0.stopAccessingSecurityScopedResource() } }
 
     private func makeRecord(url: URL, keys: Set<URLResourceKey>) -> FileRecord? {
@@ -122,38 +157,53 @@ final class Indexer: ObservableObject {
     }
 
     private func handle(path: String, flags: FSEventStreamEventFlags) {
-        // Our own WAL writes must not trigger more indexing writes and refreshes.
-        if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
-            let ownPath = support.appendingPathComponent("SwiftFind").path
-            if path == ownPath || path.hasPrefix(ownPath + "/") { return }
-        }
+        // Ignore our own SQLite/WAL activity before it enters the pending queue.
+        if isInternalPath(path) { return }
+        // FSEvents can report a large burst for one filesystem operation. Move
+        // the coalescing state onto the indexer queue so it is synchronized.
         worker.async { [weak self] in
             guard let self else { return }
-            let url = URL(fileURLWithPath: path)
-            if flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0 {
-                try? self.database.remove(paths: [path])
-                self.publishStatus("已移除变更路径")
-                return
-            }
-            guard FileManager.default.fileExists(atPath: path) else {
-                try? self.database.remove(paths: [path])
-                return
-            }
-            let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .nameKey, .volumeNameKey]
-            var records: [FileRecord] = []
-            if let values = try? url.resourceValues(forKeys: keys), let name = values.name {
-                records.append(FileRecord(id: 0, path: path, name: name, isDirectory: values.isDirectory ?? false, size: Int64(values.fileSize ?? 0), modifiedAt: values.contentModificationDate, volume: values.volumeName ?? "Unknown"))
-                if values.isDirectory == true, let enumerator = FileManager.default.enumerator(at: url, includingPropertiesForKeys: Array(keys), options: [.skipsHiddenFiles]) {
-                    for case let child as URL in enumerator {
-                        if let childValues = try? child.resourceValues(forKeys: keys), let childName = childValues.name {
-                            records.append(FileRecord(id: 0, path: child.path, name: childName, isDirectory: childValues.isDirectory ?? false, size: Int64(childValues.fileSize ?? 0), modifiedAt: childValues.contentModificationDate, volume: childValues.volumeName ?? "Unknown"))
-                        }
-                    }
-                }
-            }
-            try? self.database.upsert(records: records)
-            self.publishStatus("索引已实时更新")
+            self.pendingEvents[path] = (self.pendingEvents[path] ?? 0) | flags
+            guard self.pendingFlushWork == nil else { return }
+            let work = DispatchWorkItem { [weak self] in self?.flushPendingEvents() }
+            self.pendingFlushWork = work
+            self.worker.asyncAfter(deadline: .now() + 0.35, execute: work)
         }
+    }
+
+    private func flushPendingEvents() {
+        let events = pendingEvents
+        pendingEvents.removeAll()
+        pendingFlushWork = nil
+        var removedPaths: [String] = []
+        var changedRecords: [FileRecord] = []
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .nameKey, .volumeNameKey]
+        for (path, flags) in events {
+            if flags & UInt32(kFSEventStreamEventFlagItemRemoved) != 0 || !FileManager.default.fileExists(atPath: path) {
+                removedPaths.append(path)
+                continue
+            }
+            let url = URL(fileURLWithPath: path)
+            if let values = try? url.resourceValues(forKeys: keys), let name = values.name {
+                changedRecords.append(FileRecord(id: 0, path: path, name: name, isDirectory: values.isDirectory ?? false, size: Int64(values.fileSize ?? 0), modifiedAt: values.contentModificationDate, volume: values.volumeName ?? "Unknown"))
+            }
+        }
+        var changed = false
+        if !removedPaths.isEmpty {
+            try? database.removeFileRowsOnly(paths: removedPaths)
+            changed = true
+        }
+        if !changedRecords.isEmpty {
+            try? database.upsertFileRows(changedRecords)
+            changed = true
+        }
+        if changed { publishStatus("索引已实时更新") }
+    }
+
+    private func isInternalPath(_ path: String) -> Bool {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return false }
+        let ownPath = support.appendingPathComponent("SwiftFind").path
+        return path == ownPath || path.hasPrefix(ownPath + "/")
     }
 
     private func publishStatus(_ message: String) {

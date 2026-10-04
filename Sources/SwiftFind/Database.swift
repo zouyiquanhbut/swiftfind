@@ -143,6 +143,48 @@ final class Database {
         }
     }
 
+    /// Lightweight incremental update used for moved/target items. Search reads
+    /// from `files`; rebuilding FTS and name grams for every move is unnecessary
+    /// and can monopolize SQLite for a large index.
+    func upsertFileRows(_ records: [FileRecord]) throws {
+        guard !records.isEmpty else { return }
+        try queue.sync {
+            try run("BEGIN TRANSACTION;")
+            do {
+                let upsert = try prepare("INSERT INTO files(path,name,is_directory,size,modified_at,volume) VALUES(?,?,?,?,?,?) ON CONFLICT(path) DO UPDATE SET name=excluded.name,is_directory=excluded.is_directory,size=excluded.size,modified_at=excluded.modified_at,volume=excluded.volume;")
+                defer { sqlite3_finalize(upsert) }
+                for record in records {
+                    bind(record, to: upsert)
+                    guard sqlite3_step(upsert) == SQLITE_DONE else { throw DatabaseError.queryFailed(lastError) }
+                    sqlite3_reset(upsert); sqlite3_clear_bindings(upsert)
+                }
+                try run("COMMIT;")
+            } catch { try? run("ROLLBACK;"); throw error }
+        }
+    }
+
+    /// Lightweight removal for a burst of filesystem events. The current
+    /// LIKE-based search only needs the main files table; FTS/grams are kept
+    /// for explicit rebuilds and are not touched per event.
+    func removeFileRowsOnly(paths: [String]) throws {
+        guard !paths.isEmpty else { return }
+        try queue.sync {
+            try run("BEGIN TRANSACTION;")
+            do {
+                let statement = try prepare("DELETE FROM files WHERE path = ? OR path LIKE ?;")
+                defer { sqlite3_finalize(statement) }
+                for path in Set(paths) {
+                    let pattern = path.hasSuffix("/") ? "\(path)%" : "\(path)/%"
+                    sqlite3_bind_text(statement, 1, path, -1, sqliteTransient)
+                    sqlite3_bind_text(statement, 2, pattern, -1, sqliteTransient)
+                    guard sqlite3_step(statement) == SQLITE_DONE else { throw DatabaseError.queryFailed(lastError) }
+                    sqlite3_reset(statement); sqlite3_clear_bindings(statement)
+                }
+                try run("COMMIT;")
+            } catch { try? run("ROLLBACK;"); throw error }
+        }
+    }
+
     func remove(paths: [String]) throws {
         guard !paths.isEmpty else { return }
         try queue.sync {
@@ -298,18 +340,13 @@ final class Database {
             let statement = try prepareRead(sql); defer { sqlite3_finalize(statement) }
             for (index, arg) in args.enumerated() { sqlite3_bind_text(statement, Int32(index + 1), arg, -1, sqliteTransient) }
             var result: [FileRecord] = []
-            var stalePaths: [String] = []
             while sqlite3_step(statement) == SQLITE_ROW {
                 let record = readRecord(statement)
+                // Do not perform heavyweight index deletion while a search is
+                // running. Missing rows are simply hidden and can be cleaned
+                // during an explicit index maintenance operation.
                 if FileManager.default.fileExists(atPath: record.path) {
                     result.append(record)
-                } else {
-                    stalePaths.append(record.path)
-                }
-            }
-            if !stalePaths.isEmpty {
-                DispatchQueue.global(qos: .utility).async { [weak self] in
-                    try? self?.remove(paths: stalePaths)
                 }
             }
             return result

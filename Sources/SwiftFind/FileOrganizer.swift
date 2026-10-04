@@ -182,7 +182,12 @@ final class FileOrganizer: ObservableObject {
                 lastMoves.append((source, target))
             }
             message = "已移动 \(sources.count) 个项目到 \(normalizedDestination.lastPathComponent)"
-            NotificationCenter.default.post(name: .swiftFindIndexDidChange, object: nil, userInfo: ["movedPaths": sources.map(\.path)])
+            let completedSources = lastMoves.map(\.source.path)
+            let completedDestinations = lastMoves.map(\.destination.path)
+            NotificationCenter.default.post(name: .swiftFindIndexDidChange, object: nil, userInfo: [
+                "movedPaths": completedSources,
+                "movedDestinationPaths": completedDestinations
+            ])
         } catch let moveError {
             let detail = moveError as NSError
             self.error = "已移动 \(lastMoves.count) 项；后续移动失败。\n源：\(currentSource?.path ?? "未知")\n目标：\(currentTarget?.path ?? "未知")\n\(detail.domain) / \(detail.code)：\(detail.localizedDescription)"

@@ -95,6 +95,9 @@ final class SearchModel: ObservableObject {
         indexObserver = NotificationCenter.default.addObserver(forName: .swiftFindIndexDidChange, object: nil, queue: .main) { [weak self] notification in
             Task { @MainActor in
                 guard let self else { return }
+                if let destinationPaths = notification.userInfo?["movedDestinationPaths"] as? [String] {
+                    self.indexer.indexAdditional(urls: destinationPaths.map(URL.init(fileURLWithPath:)), recursive: true)
+                }
                 if let paths = notification.userInfo?["movedPaths"] as? [String] {
                     // Remove the old paths from the index before the delayed
                     // refresh; otherwise FSEvents may not have arrived yet and
@@ -109,9 +112,17 @@ final class SearchModel: ObservableObject {
                     self.resultsRevision &+= 1
                     self.selectedIDs.subtract(removedIDs)
                 }
-                self.scheduleIndexRefresh(delay: notification.userInfo?["movedPaths"] != nil ? .milliseconds(250) : .seconds(1))
+                if notification.userInfo?["indexedDestinationPaths"] != nil {
+                    self.search(showProgress: false)
+                } else {
+                    self.scheduleIndexRefresh(delay: notification.userInfo?["movedPaths"] != nil ? .milliseconds(250) : .seconds(1))
+                }
             }
         }
+        // Target folders may be outside the selected index roots. Start their
+        // incremental scan only after the observer is installed, so completion
+        // can trigger the first fresh search.
+        indexer.indexAdditional(urls: organizer.targets.map(\.url), recursive: false)
         previewObserver = NotificationCenter.default.addObserver(forName: .swiftFindPreviewSelection, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.previewSelected() }
         }
