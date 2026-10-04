@@ -13,7 +13,7 @@ struct FolderTarget: Identifiable, Hashable {
 final class FileOrganizer: ObservableObject {
     @Published private(set) var targets: [FolderTarget] = []
     @Published var hoveredTargetID: UUID?
-    @Published var targetDropIndex: Int?
+    @Published private(set) var targetDropIndex: Int?
     @Published var isMoving = false
     @Published var message: String?
     @Published var error: String?
@@ -90,7 +90,13 @@ final class FileOrganizer: ObservableObject {
         saveTargets()
     }
 
-    func setTargetDropIndex(_ index: Int?) { targetDropIndex = index }
+    // Dragging sends many updates while the pointer remains in the same
+    // insertion zone. Avoid publishing identical values and rebuilding the
+    // entire target-folder panel for each of those events.
+    func setTargetDropIndex(_ index: Int?) {
+        guard targetDropIndex != index else { return }
+        targetDropIndex = index
+    }
 
     func handleTargetAreaDrop(_ providers: [NSItemProvider], position: Int, target: URL?) {
         if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(reorderType) }) {
@@ -106,7 +112,7 @@ final class FileOrganizer: ObservableObject {
         guard let source = targets.firstIndex(where: { $0.id == id }) else { return }
         let adjusted = source < destination ? destination - 1 : destination
         moveTarget(from: source, to: max(0, adjusted))
-        targetDropIndex = nil
+        setTargetDropIndex(nil)
         hoveredTargetID = nil
     }
 
@@ -119,7 +125,7 @@ final class FileOrganizer: ObservableObject {
                 let insertion = self.targetDropIndex ?? destination
                 let adjusted = source < insertion ? insertion - 1 : insertion
                 self.moveTarget(from: source, to: max(0, adjusted))
-                self.targetDropIndex = nil
+                self.setTargetDropIndex(nil)
                 self.hoveredTargetID = nil
             }
         }

@@ -40,14 +40,24 @@ struct TargetFoldersView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 8) {
-                        ForEach(organizer.targets) { target in
-                            let position = organizer.targets.firstIndex(where: { $0.id == target.id }) ?? 0
-                            if organizer.targetDropIndex == position { DropInsertionIndicator() }
+                        ForEach(Array(organizer.targets.enumerated()), id: \.element.id) { position, target in
                             TargetFolderRow(target: target, position: position, organizer: organizer)
+                                .overlay(alignment: .top) {
+                                    if organizer.targetDropIndex == position {
+                                        DropInsertionIndicator()
+                                            .offset(y: -7)
+                                    }
+                                }
                         }
-                        if organizer.targetDropIndex == organizer.targets.count { DropInsertionIndicator() }
                     }
                     .padding(10)
+                    .overlay(alignment: .bottom) {
+                        if organizer.targetDropIndex == organizer.targets.count {
+                            DropInsertionIndicator()
+                                .padding(.horizontal, 10)
+                                .offset(y: -3)
+                        }
+                    }
                     Spacer(minLength: 80)
                 }
                 .onDrop(of: [swiftFindTargetReorderType, swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier], isTargeted: Binding(

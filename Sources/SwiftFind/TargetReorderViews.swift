@@ -52,7 +52,7 @@ final class ReorderHandleNSView: NSView, NSDraggingSource {
 
 struct TargetReorderDropZone: NSViewRepresentable {
     let position: Int
-    @ObservedObject var organizer: FileOrganizer
+    let organizer: FileOrganizer
 
     func makeNSView(context: Context) -> ReorderDropNSView {
         let view = ReorderDropNSView()
@@ -80,17 +80,20 @@ final class ReorderDropNSView: NSView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         guard sender.draggingPasteboard.types?.contains(targetReorderPasteboardType) == true else { return [] }
-        organizer?.targetDropIndex = position
+        organizer?.setTargetDropIndex(position)
         return .move
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        organizer?.targetDropIndex = position
+        // Keep this as a cheap fallback for AppKit view reuse/boundary
+        // transitions. FileOrganizer ignores identical positions, so staying
+        // in one zone does not publish repeated SwiftUI updates.
+        organizer?.setTargetDropIndex(position)
         return .move
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        if organizer?.targetDropIndex == position { organizer?.targetDropIndex = nil }
+        if organizer?.targetDropIndex == position { organizer?.setTargetDropIndex(nil) }
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
