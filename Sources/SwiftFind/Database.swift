@@ -273,26 +273,27 @@ final class Database {
                 let combo = terms.joined(separator: "_")
                 let comboPattern = "%\(combo)%"
                 let exactName = combo + (query.extensionName.map { ".\($0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))" } ?? "")
-                orderParts.append("CASE WHEN f.is_directory = 0 AND lower(f.name) = ? THEN 0")
+                var rankCases = ["CASE WHEN f.is_directory = 0 AND lower(f.name) = ? THEN 0"]
                 rankingArguments.append(exactName)
-                orderParts.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 1")
+                rankCases.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 1")
                 rankingArguments.append(comboPattern)
-                orderParts.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 2")
+                rankCases.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 2")
                 rankingArguments.append(comboPattern)
                 for (index, term) in terms.enumerated() {
                     let pattern = "%\(term)%"
-                    orderParts.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(3 + index * 2)")
+                    rankCases.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(3 + index * 2)")
                     rankingArguments.append(pattern)
-                    orderParts.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(4 + index * 2)")
+                    rankCases.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(4 + index * 2)")
                     rankingArguments.append(pattern)
                 }
-                orderParts.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN 7")
+                rankCases.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN 7")
                 rankingArguments.append(comboPattern)
                 for (index, term) in terms.enumerated() {
-                    orderParts.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN \(8 + index)")
+                    rankCases.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN \(8 + index)")
                     rankingArguments.append("%\(term)%")
                 }
-                orderParts.append("ELSE 100 END ASC")
+                rankCases.append("ELSE 100 END ASC")
+                orderParts.append(rankCases.joined(separator: " "))
             }
             let direction = ascending ? "ASC" : "DESC"
             switch sort {
