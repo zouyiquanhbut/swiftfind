@@ -259,8 +259,13 @@ struct SearchView: View {
                     Text("\(model.query.isEmpty ? model.recentResults.count : model.results.count) 个结果").foregroundStyle(.secondary)
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
-                    Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
-                        .pickerStyle(.segmented).frame(width: 150)
+                    HStack(spacing: 6) {
+                        Text("搜索范围").foregroundStyle(.secondary)
+                        Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
+                            .labelsHidden()
+                            .pickerStyle(.segmented)
+                            .frame(width: 150)
+                    }
                     Picker("排序", selection: $model.sort) { ForEach(ResultSort.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(width: 105)
                     Button { model.ascending.toggle() } label: { Image(systemName: model.ascending ? "chevron.up" : "chevron.down") }.help(model.ascending ? "升序" : "降序")
                     if !model.selectedIDs.isEmpty { Text("已选 \(model.selectedIDs.count) 项").foregroundStyle(.blue) }
