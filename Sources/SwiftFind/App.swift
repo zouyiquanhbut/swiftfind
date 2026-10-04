@@ -60,6 +60,11 @@ final class SearchModel: ObservableObject {
         UserDefaults.standard.set(ascending, forKey: "SwiftFind.resultSortAscending")
         search()
     } }
+    @Published var searchScope: SearchScope { didSet {
+        guard searchScope != oldValue else { return }
+        UserDefaults.standard.set(searchScope.rawValue, forKey: "SwiftFind.searchScope")
+        search()
+    } }
     let indexer: Indexer
     let organizer = FileOrganizer()
     private let database: Database
@@ -76,6 +81,7 @@ final class SearchModel: ObservableObject {
         self.sort = UserDefaults.standard.string(forKey: "SwiftFind.resultSort")
             .flatMap(ResultSort.init(rawValue:)) ?? .name
         self.ascending = UserDefaults.standard.object(forKey: "SwiftFind.resultSortAscending") as? Bool ?? true
+        self.searchScope = SearchScope(rawValue: UserDefaults.standard.string(forKey: "SwiftFind.searchScope") ?? "") ?? .name
         self.indexer = Indexer(database: database)
         self.history = UserDefaults.standard.stringArray(forKey: "SwiftFind.searchHistory") ?? []
         // First results are fetched by onAppear using the restored sort order.
@@ -138,7 +144,8 @@ final class SearchModel: ObservableObject {
         task = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(60))
             guard !Task.isCancelled, let self, generation == self.searchGeneration else { return }
-            let parsed = parser.parse(value)
+            var parsed = parser.parse(value)
+            parsed.scope = searchScope
             do {
                 let found = try await database.searchAsync(parsed, sort: sort, ascending: ascending)
                 guard !Task.isCancelled, generation == self.searchGeneration else { return }
@@ -252,6 +259,8 @@ struct SearchView: View {
                     Text("\(model.query.isEmpty ? model.recentResults.count : model.results.count) 个结果").foregroundStyle(.secondary)
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
+                    Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
+                        .pickerStyle(.segmented).frame(width: 150)
                     Picker("排序", selection: $model.sort) { ForEach(ResultSort.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(width: 105)
                     Button { model.ascending.toggle() } label: { Image(systemName: model.ascending ? "chevron.up" : "chevron.down") }.help(model.ascending ? "升序" : "降序")
                     if !model.selectedIDs.isEmpty { Text("已选 \(model.selectedIDs.count) 项").foregroundStyle(.blue) }

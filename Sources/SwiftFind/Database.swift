@@ -237,7 +237,8 @@ final class Database {
                 // matching any term, then rank filename hits before path hits.
                 // The old AND/gram combination removed filename-only matches
                 // for the first term before relevance sorting could run.
-                let termConditions = terms.map { _ in "(lower(f.name) LIKE ? ESCAPE '\\' OR lower(f.path) LIKE ? ESCAPE '\\')" }.joined(separator: " OR ")
+                let field = query.scope == .name ? "f.name" : "f.path"
+                let termConditions = terms.map { _ in "lower(\(field)) LIKE ? ESCAPE '\\'" }.joined(separator: " OR ")
                 sql += " WHERE (\(termConditions))"
                 for term in terms {
                     let escaped = term.description.lowercased()
@@ -245,7 +246,6 @@ final class Database {
                         .replacingOccurrences(of: "%", with: "\\%")
                         .replacingOccurrences(of: "_", with: "\\_")
                     let pattern = "%\(escaped)%"
-                    args.append(pattern)
                     args.append(pattern)
                 }
             } else { sql += " WHERE 1=1" }
@@ -273,7 +273,7 @@ final class Database {
                 let combo = terms.joined(separator: "_")
                 let comboPattern = "%\(combo)%"
                 let exactName = combo + (query.extensionName.map { ".\($0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))" } ?? "")
-                var rankCases = ["CASE WHEN f.is_directory = 0 AND lower(f.name) = ? THEN 0"]
+                var rankCases = ["CASE WHEN lower(f.name) = ? THEN 0"]
                 rankingArguments.append(exactName)
                 rankCases.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 1")
                 rankingArguments.append(comboPattern)

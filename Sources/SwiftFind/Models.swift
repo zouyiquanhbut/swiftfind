@@ -27,8 +27,15 @@ enum ResultSort: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum SearchScope: String, CaseIterable, Identifiable {
+    case name = "文件名"
+    case path = "路径名"
+    var id: String { rawValue }
+}
+
 struct SearchQuery {
     var text = ""
+    var scope: SearchScope = .name
     var extensionName: String?
     var pathPrefix: String?
     var kind: Kind?
