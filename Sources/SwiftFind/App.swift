@@ -321,9 +321,14 @@ struct SearchView: View {
             Divider()
             TargetFoldersView(organizer: model.organizer)
         }
-        .frame(minWidth: 920, minHeight: 520)
+        .frame(minWidth: minimumWindowWidth, minHeight: 520)
         .onAppear { focused = true; model.search() }
         .onExitCommand { NSApp.keyWindow?.close() }
+    }
+
+    private var minimumWindowWidth: CGFloat {
+        let screenWidth = NSScreen.main?.visibleFrame.width ?? 1440
+        return min(920, screenWidth * 0.5)
     }
 
     private func provider(for record: FileRecord) -> NSItemProvider {
