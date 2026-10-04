@@ -18,8 +18,6 @@ final class Database {
     private var gramIndexReady = false
     private let queue = DispatchQueue(label: "swiftfind.database")
     private let searchWorker = DispatchQueue(label: "swiftfind.search", qos: .userInitiated)
-    private let staleScanLock = NSLock()
-    private var didReconcileStaleRecords = false
 
     // Never wait for SQLite's serialization queue on the UI thread.
     func searchAsync(_ query: SearchQuery, sort: ResultSort, ascending: Bool) async throws -> [FileRecord] {
@@ -31,7 +29,9 @@ final class Database {
                        query.minimumSize == nil, query.modifiedAfter == nil {
                         return try self.desktopItems(includeHidden: query.includeHidden)
                     }
-                    try self.reconcileStaleRecordsIfNeeded()
+                    // Do not perform a full 382k-path filesystem scan before
+                    // returning search results. Stale rows are filtered while
+                    // reading the result set and cleaned asynchronously below.
                     return try self.search(query, sort: sort, ascending: ascending)
                 }
                 continuation.resume(with: result)
@@ -203,26 +203,6 @@ final class Database {
         }
     }
 
-    private func reconcileStaleRecordsIfNeeded() throws {
-        let shouldScan = staleScanLock.withLock {
-            if didReconcileStaleRecords { return false }
-            didReconcileStaleRecords = true
-            return true
-        }
-        guard shouldScan else { return }
-        var stale: [String] = []
-        try readQueue.sync {
-            let statement = try prepareReadOnly("SELECT path FROM files;")
-            defer { sqlite3_finalize(statement) }
-            while sqlite3_step(statement) == SQLITE_ROW {
-                guard let raw = sqlite3_column_text(statement, 0) else { continue }
-                let path = String(cString: raw)
-                if !FileManager.default.fileExists(atPath: path) { stale.append(path) }
-            }
-        }
-        if !stale.isEmpty { try remove(paths: stale) }
-    }
-
     func search(_ query: SearchQuery, sort: ResultSort = .name, ascending: Bool = true, limit: Int? = nil) throws -> [FileRecord] {
         try readQueue.sync {
             func prepareRead(_ sql: String) throws -> OpaquePointer? {
@@ -386,13 +366,6 @@ final class Database {
 
     private var lastError: String { handle.map { String(cString: sqlite3_errmsg($0)) } ?? "SQLite error" }
     private func run(_ sql: String) throws { guard sqlite3_exec(handle, sql, nil, nil, nil) == SQLITE_OK else { throw DatabaseError.queryFailed(lastError) } }
-    private func prepareReadOnly(_ sql: String) throws -> OpaquePointer? {
-        var statement: OpaquePointer?
-        guard sqlite3_prepare_v2(readHandle, sql, -1, &statement, nil) == SQLITE_OK else {
-            throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(readHandle)))
-        }
-        return statement
-    }
     private func prepare(_ sql: String) throws -> OpaquePointer? { var statement: OpaquePointer?; guard sqlite3_prepare_v2(handle, sql, -1, &statement, nil) == SQLITE_OK else { throw DatabaseError.queryFailed(lastError) }; return statement }
     private func bind(_ record: FileRecord, to statement: OpaquePointer?) { sqlite3_bind_text(statement, 1, record.path, -1, sqliteTransient); sqlite3_bind_text(statement, 2, record.name, -1, sqliteTransient); sqlite3_bind_int(statement, 3, record.isDirectory ? 1 : 0); sqlite3_bind_int64(statement, 4, record.size); if let date = record.modifiedAt { sqlite3_bind_double(statement, 5, date.timeIntervalSince1970) } else { sqlite3_bind_null(statement, 5) }; sqlite3_bind_text(statement, 6, record.volume, -1, sqliteTransient) }
     private func readRecord(_ statement: OpaquePointer?) -> FileRecord { FileRecord(id: sqlite3_column_int64(statement, 0), path: String(cString: sqlite3_column_text(statement, 1)), name: String(cString: sqlite3_column_text(statement, 2)), isDirectory: sqlite3_column_int(statement, 3) != 0, size: sqlite3_column_int64(statement, 4), modifiedAt: sqlite3_column_type(statement, 5) == SQLITE_NULL ? nil : Date(timeIntervalSince1970: sqlite3_column_double(statement, 5)), volume: String(cString: sqlite3_column_text(statement, 6))) }
