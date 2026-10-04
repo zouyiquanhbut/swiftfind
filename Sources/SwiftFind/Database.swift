@@ -165,36 +165,20 @@ final class Database {
 
     /// Direct children of the user's Desktop, used as the default empty-search view.
     func desktopItems(limit: Int = 1_000) throws -> [FileRecord] {
-        try readQueue.sync {
-            guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else { return [] }
-            let root = desktop.standardizedFileURL.path
-            let prefix = root.hasSuffix("/") ? root : root + "/"
-            let firstChildPosition = prefix.count + 1 // SQLite substr is 1-indexed.
-            let sql = """
-            SELECT id,path,name,is_directory,size,modified_at,volume FROM files
-            WHERE path LIKE ? AND instr(substr(path, \(firstChildPosition)), '/') = 0
-            ORDER BY is_directory DESC, name COLLATE NOCASE ASC
-            LIMIT \(limit);
-            """
-            var statement: OpaquePointer?
-            guard sqlite3_prepare_v2(readHandle, sql, -1, &statement, nil) == SQLITE_OK else {
-                throw DatabaseError.queryFailed(String(cString: sqlite3_errmsg(readHandle)))
-            }
-            defer { sqlite3_finalize(statement) }
-            sqlite3_bind_text(statement, 1, "\(prefix)%", -1, sqliteTransient)
-            var result: [FileRecord] = []
-            var stalePaths: [String] = []
-            while sqlite3_step(statement) == SQLITE_ROW {
-                let record = readRecord(statement)
-                if FileManager.default.fileExists(atPath: record.path) {
-                    result.append(record)
-                } else {
-                    stalePaths.append(record.path)
-                }
-            }
-            if !stalePaths.isEmpty { DispatchQueue.global(qos: .utility).async { [weak self] in try? self?.remove(paths: stalePaths) } }
-            return result
+        guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else { return [] }
+        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .nameKey, .volumeNameKey]
+        let urls = try FileManager.default.contentsOfDirectory(at: desktop, includingPropertiesForKeys: Array(keys), options: [])
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: keys), let name = values.name else { return nil }
+            return FileRecord(id: 0, path: url.path, name: name, isDirectory: values.isDirectory ?? false, size: Int64(values.fileSize ?? 0), modifiedAt: values.contentModificationDate, volume: values.volumeName ?? "Unknown")
         }
+        .sorted {
+            if $0.isDirectory != $1.isDirectory { return $0.isDirectory && !$1.isDirectory }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        .prefix(limit)
+        .map { $0 }
+
     }
 
     func recent(limit: Int = 50) throws -> [FileRecord] {
