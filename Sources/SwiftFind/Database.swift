@@ -227,20 +227,18 @@ final class Database {
             }
             var sql = "SELECT f.id,f.path,f.name,f.is_directory,f.size,f.modified_at,f.volume FROM files f"
             var args: [String] = []
-            var exactNameTerm: String?
-            var nameRankTerms: [String] = []
-            var namePositionTerms: [String] = []
+            var rankingArguments: [String] = []
             if !query.text.isEmpty {
                 // Plain LIKE matching is intentionally used for correctness across
                 // Chinese, numbers, symbols, and SQLite builds with different FTS tokenizers.
                 // FTS5 remains in the schema for a later indexed fast path.
                 let terms = query.text.split(whereSeparator: { $0 == " " || $0 == "\t" })
-                exactNameTerm = query.text.lowercased()
                 // A space-separated query is a relevance query: return items
                 // matching any term, then rank filename hits before path hits.
                 // The old AND/gram combination removed filename-only matches
                 // for the first term before relevance sorting could run.
-                sql += " WHERE " + terms.map { _ in "(lower(f.name) LIKE ? ESCAPE '\\' OR lower(f.path) LIKE ? ESCAPE '\\')" }.joined(separator: " OR ")
+                let termConditions = terms.map { _ in "(lower(f.name) LIKE ? ESCAPE '\\' OR lower(f.path) LIKE ? ESCAPE '\\')" }.joined(separator: " OR ")
+                sql += " WHERE (\(termConditions))"
                 for term in terms {
                     let escaped = term.description.lowercased()
                         .replacingOccurrences(of: "\\", with: "\\\\")
@@ -249,37 +247,52 @@ final class Database {
                     let pattern = "%\(escaped)%"
                     args.append(pattern)
                     args.append(pattern)
-                    nameRankTerms.append(pattern)
-                    namePositionTerms.append(escaped)
                 }
             } else { sql += " WHERE 1=1" }
             if let ext = query.extensionName {
                 let normalizedExtension = ext.hasPrefix(".") ? ext : ".\(ext)"
-                sql += " AND lower(f.name) LIKE ? ESCAPE '\\'"
-                args.append("%\(normalizedExtension.lowercased().replacingOccurrences(of: "%", with: "\\%").replacingOccurrences(of: "_", with: "\\_"))")
+                let escapedExtension = normalizedExtension.lowercased()
+                    .replacingOccurrences(of: "\\", with: "\\\\")
+                    .replacingOccurrences(of: "%", with: "\\%")
+                    .replacingOccurrences(of: "_", with: "\\_")
+                // Extension filters apply to files; folders remain available
+                // for the folder-name relevance tiers.
+                sql += " AND (f.is_directory = 1 OR lower(f.name) LIKE ? ESCAPE '\\')"
+                args.append("%\(escapedExtension)")
             }
             if let path = query.pathPrefix { sql += " AND f.path LIKE ?"; args.append(path.hasSuffix("/") ? "\(path)%" : "\(path)/%") }
             if let kind = query.kind { sql += " AND f.is_directory = \(kind == .folder ? 1 : 0)" }
             if let minimumSize = query.minimumSize { sql += " AND f.size >= \(minimumSize)" }
             if let modifiedAfter = query.modifiedAfter { sql += " AND f.modified_at >= \(modifiedAfter.timeIntervalSince1970)" }
-            // Relevance comes first: a name hit outranks a path-only hit.
-            // The user's selected sort is the tie-breaker in the same ORDER BY.
+            // Explicit relevance tiers. For `A BIM` with `ext:c` this is:
+            // exact A_B.c, A_B folder, A_B file, A folder, A file,
+            // BIM folder, BIM file, then path A_B/A/BIM.
             var orderParts: [String] = []
-            if !nameRankTerms.isEmpty {
-                // An exact case-insensitive filename match is always first.
-                // For example, `IFLUX Dev.app` must precede partial matches.
-                orderParts.append("CASE WHEN lower(f.name) = ? THEN 0 ELSE 1 END ASC")
-                let termCount = nameRankTerms.count
-                let rank = nameRankTerms.enumerated().map { index, _ in
-                    // Missing the first query term must cost more than missing
-                    // later terms: `iflux dex` => iflux weight 10, dex weight 1.
-                    let weight = Int(pow(10.0, Double(termCount - index - 1)))
-                    return "(CASE WHEN lower(f.name) LIKE ? ESCAPE '\\' THEN 0 ELSE \(weight) END)"
-                }.joined(separator: " + ")
-                orderParts.append("(\(rank)) ASC")
-                // Among name hits, an earlier literal occurrence wins.
-                let positions = namePositionTerms.map { _ in "CASE WHEN instr(lower(f.name), ?) > 0 THEN instr(lower(f.name), ?) ELSE 1000000 END" }.joined(separator: " + ")
-                orderParts.append("(\(positions)) ASC")
+            let terms = query.text.split(whereSeparator: { $0 == " " || $0 == "\t" }).map { $0.description.lowercased() }
+            if !terms.isEmpty {
+                let combo = terms.joined(separator: "_")
+                let comboPattern = "%\(combo)%"
+                let exactName = combo + (query.extensionName.map { ".\($0.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))" } ?? "")
+                orderParts.append("CASE WHEN f.is_directory = 0 AND lower(f.name) = ? THEN 0")
+                rankingArguments.append(exactName)
+                orderParts.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 1")
+                rankingArguments.append(comboPattern)
+                orderParts.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN 2")
+                rankingArguments.append(comboPattern)
+                for (index, term) in terms.enumerated() {
+                    let pattern = "%\(term)%"
+                    orderParts.append("WHEN f.is_directory = 1 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(3 + index * 2)")
+                    rankingArguments.append(pattern)
+                    orderParts.append("WHEN f.is_directory = 0 AND lower(f.name) LIKE ? ESCAPE '\\' THEN \(4 + index * 2)")
+                    rankingArguments.append(pattern)
+                }
+                orderParts.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN 7")
+                rankingArguments.append(comboPattern)
+                for (index, term) in terms.enumerated() {
+                    orderParts.append("WHEN lower(f.path) LIKE ? ESCAPE '\\' THEN \(8 + index)")
+                    rankingArguments.append("%\(term)%")
+                }
+                orderParts.append("ELSE 100 END ASC")
             }
             let direction = ascending ? "ASC" : "DESC"
             switch sort {
@@ -291,14 +304,7 @@ final class Database {
             sql += " ORDER BY \(orderParts.joined(separator: ", "))"
             if let limit { sql += " LIMIT \(limit)" }
             sql += ";"
-            if !nameRankTerms.isEmpty {
-                if let exactNameTerm { args.append(exactNameTerm) }
-                args.append(contentsOf: nameRankTerms)
-                for term in namePositionTerms {
-                    args.append(term)
-                    args.append(term)
-                }
-            }
+            args.append(contentsOf: rankingArguments)
             let statement = try prepareRead(sql); defer { sqlite3_finalize(statement) }
             for (index, arg) in args.enumerated() { sqlite3_bind_text(statement, Int32(index + 1), arg, -1, sqliteTransient) }
             var result: [FileRecord] = []
