@@ -27,7 +27,7 @@ final class Database {
                     if query.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                        query.extensionName == nil, query.pathPrefix == nil, query.kind == nil,
                        query.minimumSize == nil, query.modifiedAfter == nil {
-                        return try self.desktopItems()
+                        return try self.desktopItems(includeHidden: query.includeHidden)
                     }
                     return try self.search(query, sort: sort, ascending: ascending)
                 }
@@ -164,10 +164,10 @@ final class Database {
     }
 
     /// Direct children of the user's Desktop, used as the default empty-search view.
-    func desktopItems(limit: Int = 1_000) throws -> [FileRecord] {
+    func desktopItems(limit: Int = 1_000, includeHidden: Bool = false) throws -> [FileRecord] {
         guard let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first else { return [] }
         let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey, .nameKey, .volumeNameKey]
-        let urls = try FileManager.default.contentsOfDirectory(at: desktop, includingPropertiesForKeys: Array(keys), options: [])
+        let urls = try FileManager.default.contentsOfDirectory(at: desktop, includingPropertiesForKeys: Array(keys), options: includeHidden ? [] : [.skipsHiddenFiles])
         return urls.compactMap { url in
             guard let values = try? url.resourceValues(forKeys: keys), let name = values.name else { return nil }
             return FileRecord(id: 0, path: url.path, name: name, isDirectory: values.isDirectory ?? false, size: Int64(values.fileSize ?? 0), modifiedAt: values.contentModificationDate, volume: values.volumeName ?? "Unknown")
@@ -212,6 +212,8 @@ final class Database {
             var sql = "SELECT f.id,f.path,f.name,f.is_directory,f.size,f.modified_at,f.volume FROM files f"
             var args: [String] = []
             var rankingArguments: [String] = []
+            sql += " WHERE 1=1"
+            if !query.includeHidden { sql += " AND f.name NOT LIKE '.%'" }
             if !query.text.isEmpty {
                 // Plain LIKE matching is intentionally used for correctness across
                 // Chinese, numbers, symbols, and SQLite builds with different FTS tokenizers.
@@ -223,7 +225,7 @@ final class Database {
                 // for the first term before relevance sorting could run.
                 let field = query.scope == .name ? "f.name" : "f.path"
                 let termConditions = terms.map { _ in "lower(\(field)) LIKE ? ESCAPE '\\'" }.joined(separator: " OR ")
-                sql += " WHERE (\(termConditions))"
+                sql += " AND (\(termConditions))"
                 for term in terms {
                     let escaped = term.description.lowercased()
                         .replacingOccurrences(of: "\\", with: "\\\\")
@@ -232,7 +234,7 @@ final class Database {
                     let pattern = "%\(escaped)%"
                     args.append(pattern)
                 }
-            } else { sql += " WHERE 1=1" }
+            }
             if let ext = query.extensionName {
                 let normalizedExtension = ext.hasPrefix(".") ? ext : ".\(ext)"
                 let escapedExtension = normalizedExtension.lowercased()

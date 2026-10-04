@@ -36,6 +36,7 @@ enum SearchScope: String, CaseIterable, Identifiable {
 struct SearchQuery {
     var text = ""
     var scope: SearchScope = .name
+    var includeHidden = false
     var extensionName: String?
     var pathPrefix: String?
     var kind: Kind?

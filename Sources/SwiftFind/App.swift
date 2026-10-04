@@ -65,6 +65,11 @@ final class SearchModel: ObservableObject {
         UserDefaults.standard.set(searchScope.rawValue, forKey: "SwiftFind.searchScope")
         search()
     } }
+    @Published var includeHidden: Bool { didSet {
+        guard includeHidden != oldValue else { return }
+        UserDefaults.standard.set(includeHidden, forKey: "SwiftFind.includeHidden")
+        search()
+    } }
     let indexer: Indexer
     let organizer = FileOrganizer()
     private let database: Database
@@ -82,6 +87,7 @@ final class SearchModel: ObservableObject {
             .flatMap(ResultSort.init(rawValue:)) ?? .name
         self.ascending = UserDefaults.standard.object(forKey: "SwiftFind.resultSortAscending") as? Bool ?? true
         self.searchScope = SearchScope(rawValue: UserDefaults.standard.string(forKey: "SwiftFind.searchScope") ?? "") ?? .name
+        self.includeHidden = UserDefaults.standard.object(forKey: "SwiftFind.includeHidden") as? Bool ?? false
         self.indexer = Indexer(database: database)
         self.history = UserDefaults.standard.stringArray(forKey: "SwiftFind.searchHistory") ?? []
         // First results are fetched by onAppear using the restored sort order.
@@ -146,6 +152,7 @@ final class SearchModel: ObservableObject {
             guard !Task.isCancelled, let self, generation == self.searchGeneration else { return }
             var parsed = parser.parse(value)
             parsed.scope = searchScope
+            parsed.includeHidden = includeHidden
             do {
                 let found = try await database.searchAsync(parsed, sort: sort, ascending: ascending)
                 guard !Task.isCancelled, generation == self.searchGeneration else { return }
@@ -260,6 +267,9 @@ struct SearchView: View {
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
                     HStack(spacing: 6) {
+                        Toggle("显示隐藏文件", isOn: $model.includeHidden)
+                            .toggleStyle(.checkbox)
+                            .help("显示以 . 开头的隐藏文件和文件夹")
                         Text("搜索范围")
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
