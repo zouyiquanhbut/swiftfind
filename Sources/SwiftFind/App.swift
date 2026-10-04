@@ -260,7 +260,10 @@ struct SearchView: View {
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
                     HStack(spacing: 6) {
-                        Text("搜索范围").foregroundStyle(.secondary)
+                        Text("搜索范围")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
                         Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
                             .labelsHidden()
                             .pickerStyle(.segmented)
@@ -269,7 +272,12 @@ struct SearchView: View {
                     Picker("排序", selection: $model.sort) { ForEach(ResultSort.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(width: 105)
                     Button { model.ascending.toggle() } label: { Image(systemName: model.ascending ? "chevron.up" : "chevron.down") }.help(model.ascending ? "升序" : "降序")
                     if !model.selectedIDs.isEmpty { Text("已选 \(model.selectedIDs.count) 项").foregroundStyle(.blue) }
-                    Text(model.indexer.status).foregroundStyle(.secondary).font(.caption)
+                    Text(model.indexer.status)
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .layoutPriority(-1)
                 }.padding(.horizontal, 14).padding(.vertical, 8)
                 // Keep a fixed-height status strip so the table never jumps while searching.
                 Group {
