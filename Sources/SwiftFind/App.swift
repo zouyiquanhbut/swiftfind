@@ -102,7 +102,7 @@ final class SearchModel: ObservableObject {
                     // Remove the old paths from the index before the delayed
                     // refresh; otherwise FSEvents may not have arrived yet and
                     // the just-moved items can briefly reappear.
-                    try? self.database.remove(paths: paths)
+                    try? self.database.removeFileRowsOnly(paths: paths)
                     let moved = Set(paths)
                     let removedIDs = Set((self.results + self.recentResults).filter { record in
                         moved.contains(record.path) || moved.contains { record.path.hasPrefix($0 + "/") }

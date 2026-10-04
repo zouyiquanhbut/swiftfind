@@ -18,7 +18,10 @@ enum FileActions {
         let destination = record.url.deletingLastPathComponent().appendingPathComponent(newName)
         do {
             try FileManager.default.moveItem(at: record.url, to: destination)
-            NotificationCenter.default.post(name: .swiftFindIndexDidChange, object: nil, userInfo: ["movedPaths": [record.path]])
+            NotificationCenter.default.post(name: .swiftFindIndexDidChange, object: nil, userInfo: [
+                "movedPaths": [record.path],
+                "movedDestinationPaths": [destination.path]
+            ])
             completion()
         } catch {
             showError("无法重命名", error.localizedDescription)
