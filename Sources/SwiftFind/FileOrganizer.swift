@@ -102,16 +102,25 @@ final class FileOrganizer: ObservableObject {
         }
     }
 
+    func moveTarget(id: UUID, to destination: Int) {
+        guard let source = targets.firstIndex(where: { $0.id == id }) else { return }
+        let adjusted = source < destination ? destination - 1 : destination
+        moveTarget(from: source, to: max(0, adjusted))
+        targetDropIndex = nil
+        hoveredTargetID = nil
+    }
+
     func handleTargetDrop(_ providers: [NSItemProvider], to destination: Int) {
         guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(reorderType) }) else { return }
         provider.loadDataRepresentation(forTypeIdentifier: reorderType) { [weak self] data, _ in
-            guard let data, let value = String(data: data, encoding: .utf8), let source = Int(value) else { return }
+            guard let data, let rawID = String(data: data, encoding: .utf8), let sourceID = UUID(uuidString: rawID) else { return }
             DispatchQueue.main.async {
-                guard let self else { return }
-                let destinationIndex = self.targetDropIndex ?? destination
-                let adjusted = source < destinationIndex ? destinationIndex - 1 : destinationIndex
+                guard let self, let source = self.targets.firstIndex(where: { $0.id == sourceID }) else { return }
+                let insertion = self.targetDropIndex ?? destination
+                let adjusted = source < insertion ? insertion - 1 : insertion
                 self.moveTarget(from: source, to: max(0, adjusted))
                 self.targetDropIndex = nil
+                self.hoveredTargetID = nil
             }
         }
     }

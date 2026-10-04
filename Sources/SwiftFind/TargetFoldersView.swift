@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import UniformTypeIdentifiers
 
 struct TargetFoldersView: View {
@@ -119,17 +120,9 @@ private struct TargetFolderRow: View {
                     Button { organizer.moveTarget(from: position, to: position + 1) } label: { Image(systemName: "chevron.down") }
                         .buttonStyle(.plain).disabled(position >= organizer.targets.count - 1).help("下移")
                 }
-                Image(systemName: "line.3.horizontal")
-                    .foregroundStyle(Color.secondary)
+                TargetReorderHandle(targetID: target.id)
+                    .frame(width: 22, height: 22)
                     .help("拖动此图标调整目标文件夹顺序")
-                    .onDrag {
-                        let provider = NSItemProvider()
-                        provider.registerDataRepresentation(forTypeIdentifier: swiftFindTargetReorderType, visibility: .all) { completion in
-                            completion(Data("\(position)".utf8), nil)
-                            return nil
-                        }
-                        return provider
-                    }
             }
             Text(target.url.path)
                 .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
@@ -141,25 +134,19 @@ private struct TargetFolderRow: View {
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(organizer.hoveredTargetID == target.id ? Color.accentColor : Color.clear, lineWidth: 2))
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { FolderOpener.open(target.url) }
-        // One unified drop receiver is important here. Two overlapping SwiftUI
-        // onDrop modifiers can cause the file drop to be claimed by the reorder
-        // receiver and never reach the move logic.
-        .onDrop(of: [swiftFindTargetReorderType, swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier], isTargeted: Binding(
-            get: { organizer.targetDropIndex == position || organizer.hoveredTargetID == target.id },
-            set: { isTargeted in
-                if !isTargeted {
-                    organizer.setTargetDropIndex(nil)
-                    organizer.hoveredTargetID = nil
-                } else if organizer.targetDropIndex != nil {
-                    organizer.setTargetDropIndex(position)
-                } else {
-                    organizer.hoveredTargetID = target.id
-                }
-            }
+        // Reordering has its own drop receiver. File drops are handled by the
+        // card receiver below so the two drag types cannot claim each other.
+        .overlay(alignment: .top) {
+            TargetReorderDropZone(position: position, organizer: organizer)
+                .frame(height: 14)
+                .offset(y: -7)
+        }
+        .onDrop(of: [swiftFindPathsType, swiftFindPathType, UTType.fileURL.identifier, UTType.url.identifier, UTType.data.identifier], isTargeted: Binding(
+            get: { organizer.hoveredTargetID == target.id },
+            set: { isTargeted in organizer.hoveredTargetID = isTargeted ? target.id : nil }
         )) { providers in
-            organizer.setTargetDropIndex(nil)
             organizer.hoveredTargetID = nil
-            organizer.handleTargetAreaDrop(providers, position: position, target: target.url)
+            organizer.moveDroppedProviders(providers, to: target.url)
             return true
         }
         .contextMenu {
