@@ -266,20 +266,20 @@ struct SearchView: View {
                     Text("\(model.query.isEmpty ? model.recentResults.count : model.results.count) 个结果").foregroundStyle(.secondary)
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
-                    HStack(spacing: 6) {
-                        Toggle("显示隐藏文件", isOn: $model.includeHidden)
-                            .toggleStyle(.checkbox)
-                            .help("显示以 . 开头的隐藏文件和文件夹")
-                        Text("搜索范围")
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                        Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .frame(width: 150)
+                    Button {
+                        model.includeHidden.toggle()
+                    } label: {
+                        Image(systemName: model.includeHidden ? "eye" : "eye.slash")
+                            .frame(width: 24, height: 24)
                     }
-                    Picker("排序", selection: $model.sort) { ForEach(ResultSort.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(width: 105)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(model.includeHidden ? .blue : .secondary)
+                    .help(model.includeHidden ? "隐藏文件已显示" : "显示隐藏文件")
+                    Picker("搜索范围", selection: $model.searchScope) { ForEach(SearchScope.allCases) { Text($0.rawValue).tag($0) } }
+                        .labelsHidden()
+                        .pickerStyle(.segmented)
+                        .frame(width: 120)
+                    Picker("排序", selection: $model.sort) { ForEach(ResultSort.allCases) { Text($0.rawValue).tag($0) } }.labelsHidden().frame(width: 95)
                     Button { model.ascending.toggle() } label: { Image(systemName: model.ascending ? "chevron.up" : "chevron.down") }.help(model.ascending ? "升序" : "降序")
                     if !model.selectedIDs.isEmpty { Text("已选 \(model.selectedIDs.count) 项").foregroundStyle(.blue) }
                     Text(model.indexer.status)
