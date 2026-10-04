@@ -295,7 +295,20 @@ final class Database {
             let statement = try prepareRead(sql); defer { sqlite3_finalize(statement) }
             for (index, arg) in args.enumerated() { sqlite3_bind_text(statement, Int32(index + 1), arg, -1, sqliteTransient) }
             var result: [FileRecord] = []
-            while sqlite3_step(statement) == SQLITE_ROW { result.append(readRecord(statement)) }
+            var stalePaths: [String] = []
+            while sqlite3_step(statement) == SQLITE_ROW {
+                let record = readRecord(statement)
+                if FileManager.default.fileExists(atPath: record.path) {
+                    result.append(record)
+                } else {
+                    stalePaths.append(record.path)
+                }
+            }
+            if !stalePaths.isEmpty {
+                DispatchQueue.global(qos: .utility).async { [weak self] in
+                    try? self?.remove(paths: stalePaths)
+                }
+            }
             return result
         }
     }
