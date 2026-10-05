@@ -72,6 +72,7 @@ final class SearchModel: ObservableObject {
     } }
     let indexer: Indexer
     let organizer = FileOrganizer()
+    let workspace = FolderWorkspaceModel()
     private let database: Database
     private let parser = SearchQueryParser()
     private var task: Task<Void, Never>?
@@ -209,6 +210,11 @@ final class SearchModel: ObservableObject {
     }
 
     func previewSelected() {
+        if workspace.currentFolder != nil {
+            guard let record = workspace.items.first(where: { $0.id == workspace.selectedItemID }) else { return }
+            openQuickLook(record)
+            return
+        }
         let visible = query.isEmpty ? recentResults : results
         guard let record = visible.first(where: { selectedIDs.contains($0.id) }) else { return }
         openQuickLook(record)
@@ -216,14 +222,23 @@ final class SearchModel: ObservableObject {
 
     func openQuickLook(_ record: FileRecord) {
         guard !record.isDirectory else { return }
-        let visible = query.isEmpty ? recentResults : results
-        QuickLookController.shared.show(urls: visible.map(\.url), selected: record.url, organizer: organizer)
+        let visible = workspace.currentFolder != nil ? workspace.items : (query.isEmpty ? recentResults : results)
+        QuickLookController.shared.show(urls: visible.filter { !$0.isDirectory }.map(\.url), selected: record.url, organizer: organizer)
     }
 
     func open(_ record: FileRecord, reveal: Bool = false) {
         if reveal { NSWorkspace.shared.activateFileViewerSelecting([record.url]) }
-        else if record.isDirectory { FolderOpener.open(record.url) }
+        else if record.isDirectory { workspace.open(record.url) }
         else { NSWorkspace.shared.open(record.url) }
+    }
+
+    func browseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.prompt = "浏览文件夹"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        workspace.open(url)
     }
 
     func copyPath(_ record: FileRecord) { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(record.path, forType: .string) }
@@ -281,6 +296,8 @@ struct SearchView: View {
                     Text("\(model.query.isEmpty ? model.recentResults.count : model.results.count) 个结果").foregroundStyle(.secondary)
                     if model.query.isEmpty { Text("桌面").foregroundStyle(.secondary) }
                     Spacer()
+                    Button("浏览文件夹…") { model.browseFolder() }
+                        .buttonStyle(.borderless)
                     Button {
                         model.includeHidden.toggle()
                     } label: {
@@ -321,8 +338,8 @@ struct SearchView: View {
                 }
                 .padding(.horizontal, 14)
                 .frame(height: 34)
-                ResultsTable(model: model)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                SearchResultsArea(model: model, workspace: model.workspace)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 HStack {
                     Button("索引目录…") { model.indexer.chooseAndIndex() }
                     Button("重建索引") { model.rebuildIndex() }
@@ -334,7 +351,9 @@ struct SearchView: View {
                 if let error = model.organizer.error { Text(error).font(.caption).foregroundStyle(.red).padding(.bottom, 4) }
             }
             Divider()
-            TargetFoldersView(organizer: model.organizer)
+            TargetFoldersView(organizer: model.organizer) { folder in
+                model.workspace.open(folder)
+            }
         }
         .frame(minWidth: minimumWindowWidth, minHeight: 520)
         .onAppear { focused = true; model.search() }
@@ -367,6 +386,21 @@ struct SearchView: View {
             return nil
         }
         return provider
+    }
+}
+
+// Observe folder navigation where the search/table switch is made, so opening
+// a folder doesn't wait for an unrelated search update to render it.
+struct SearchResultsArea: View {
+    @ObservedObject var model: SearchModel
+    @ObservedObject var workspace: FolderWorkspaceModel
+
+    var body: some View {
+        if workspace.currentFolder != nil {
+            FolderWorkspaceView(model: workspace, onPreview: model.openQuickLook)
+        } else {
+            ResultsTable(model: model)
+        }
     }
 }
 

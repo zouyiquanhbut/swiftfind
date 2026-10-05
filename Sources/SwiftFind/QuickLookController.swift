@@ -3,9 +3,10 @@ import QuickLookUI
 import SwiftUI
 
 /// A Quick Look panel with explicit previous/next controls for the current result set.
-final class QuickLookController: NSWindowController {
+final class QuickLookController: NSWindowController, NSWindowDelegate {
     static let shared = QuickLookController()
     private let previewView: QLPreviewView
+    private let markdownView = MarkdownPreviewView(frame: .zero)
     private let previousButton = NSButton()
     private let nextButton = NSButton()
     private let trashButton = NSButton()
@@ -15,6 +16,9 @@ final class QuickLookController: NSWindowController {
 
     private init() {
         previewView = QLPreviewView(frame: .zero, style: .normal)
+        // This controller reuses its window. A closed QLPreviewView cannot
+        // accept another preview item, so keep it alive across window closes.
+        previewView.shouldCloseWithWindow = false
         let panel = NavigationPreviewPanel(
             contentRect: NSRect(x: 0, y: 0, width: 920, height: 640),
             styleMask: [.titled, .closable, .resizable, .utilityWindow],
@@ -24,11 +28,22 @@ final class QuickLookController: NSWindowController {
         panel.title = "快速预览"
         panel.isReleasedWhenClosed = false
         super.init(window: panel)
+        panel.delegate = self
         panel.keyHandler = { [weak self] event in self?.handleKey(event) ?? false }
         configurePanel(panel)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    deinit { previewView.close() }
+
+    func windowWillClose(_ notification: Notification) {
+        previewView.previewItem = nil
+        markdownView.clear()
+        urls.removeAll()
+        currentIndex = 0
+        organizer = nil
+    }
 
     func show(urls: [URL], selected: URL, organizer: FileOrganizer) {
         self.organizer = organizer
@@ -47,6 +62,9 @@ final class QuickLookController: NSWindowController {
         panel.contentView = content
         previewView.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(previewView)
+        markdownView.translatesAutoresizingMaskIntoConstraints = false
+        markdownView.isHidden = true
+        content.addSubview(markdownView)
 
         configure(button: previousButton, symbol: "chevron.left", action: #selector(previous))
         configure(button: nextButton, symbol: "chevron.right", action: #selector(next))
@@ -61,6 +79,10 @@ final class QuickLookController: NSWindowController {
             previewView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             previewView.topAnchor.constraint(equalTo: content.topAnchor),
             previewView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            markdownView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            markdownView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            markdownView.topAnchor.constraint(equalTo: content.topAnchor),
+            markdownView.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             previousButton.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             previousButton.centerYAnchor.constraint(equalTo: content.centerYAnchor),
             previousButton.widthAnchor.constraint(equalToConstant: 42),
@@ -120,6 +142,10 @@ final class QuickLookController: NSWindowController {
 
     private func handleKey(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .option, .control, .shift])
+        if (event.keyCode == 49 || event.keyCode == 53) && flags.isEmpty {
+            close()
+            return true
+        }
         if event.keyCode == 123 && flags.isEmpty { previous(); return true }
         if event.keyCode == 124 && flags.isEmpty { next(); return true }
         if event.keyCode == 51 && flags == .command { trashCurrent(); return true }
@@ -149,7 +175,16 @@ final class QuickLookController: NSWindowController {
     private func updatePreview() {
         guard urls.indices.contains(currentIndex) else { return }
         let url = urls[currentIndex]
-        previewView.previewItem = url as NSURL
+        let isMarkdown = ["md", "markdown", "mdown"].contains(url.pathExtension.lowercased())
+        previewView.isHidden = isMarkdown
+        markdownView.isHidden = !isMarkdown
+        if isMarkdown {
+            previewView.previewItem = nil
+            markdownView.show(url)
+        } else {
+            markdownView.clear()
+            previewView.previewItem = url as NSURL
+        }
         previousButton.isEnabled = currentIndex > 0
         nextButton.isEnabled = currentIndex < urls.count - 1
         window?.title = "\(url.lastPathComponent)（\(currentIndex + 1)/\(urls.count)）"

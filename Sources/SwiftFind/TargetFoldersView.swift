@@ -4,6 +4,7 @@ import UniformTypeIdentifiers
 
 struct TargetFoldersView: View {
     @ObservedObject var organizer: FileOrganizer
+    let onBrowse: (URL) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -41,7 +42,7 @@ struct TargetFoldersView: View {
                 ScrollView {
                     LazyVStack(spacing: 8) {
                         ForEach(Array(organizer.targets.enumerated()), id: \.element.id) { position, target in
-                            TargetFolderRow(target: target, position: position, organizer: organizer)
+                            TargetFolderRow(target: target, position: position, organizer: organizer, onBrowse: onBrowse)
                                 .overlay(alignment: .top) {
                                     if organizer.targetDropIndex == position {
                                         DropInsertionIndicator()
@@ -111,6 +112,7 @@ private struct TargetFolderRow: View {
     let target: FolderTarget
     let position: Int
     @ObservedObject var organizer: FileOrganizer
+    let onBrowse: (URL) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -143,7 +145,7 @@ private struct TargetFolderRow: View {
         .foregroundStyle(organizer.hoveredTargetID == target.id ? .white : .primary)
         .overlay(RoundedRectangle(cornerRadius: 6).stroke(organizer.hoveredTargetID == target.id ? Color.accentColor : Color.clear, lineWidth: 2))
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { FolderOpener.open(target.url) }
+        .onTapGesture(count: 2) { onBrowse(target.url) }
         // Reordering has its own drop receiver. File drops are handled by the
         // card receiver below so the two drag types cannot claim each other.
         .overlay(alignment: .top) {
@@ -160,6 +162,7 @@ private struct TargetFolderRow: View {
             return true
         }
         .contextMenu {
+            Button("在 SwiftFind 中浏览") { onBrowse(target.url) }
             Button("打开文件夹") { FolderOpener.open(target.url) }
             Button("在 Finder 中显示") { NSWorkspace.shared.activateFileViewerSelecting([target.url]) }
             Divider()

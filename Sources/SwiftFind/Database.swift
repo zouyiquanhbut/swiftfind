@@ -372,13 +372,14 @@ final class Database {
 
     private func buildNameGramIndexIfNeeded() throws {
         try queue.sync {
-            var statement = try prepare("SELECT COUNT(*) FROM name_grams;")
+            let statement = try prepare("SELECT 1 FROM name_grams LIMIT 1;")
             defer { sqlite3_finalize(statement) }
-            guard sqlite3_step(statement) == SQLITE_ROW else { throw DatabaseError.queryFailed(lastError) }
-            if sqlite3_column_int64(statement, 0) > 0 {
+            let state = sqlite3_step(statement)
+            if state == SQLITE_ROW {
                 gramStateLock.withLock { gramIndexReady = true }
                 return
             }
+            guard state == SQLITE_DONE else { throw DatabaseError.queryFailed(lastError) }
             try run("BEGIN TRANSACTION;")
             do {
                 let files = try prepare("SELECT id,path,name,is_directory,size,modified_at,volume FROM files;")

@@ -57,12 +57,21 @@ final class Indexer: ObservableObject {
         root = urls.first
         watchedRoots = urls
         startWatcher()
-        indexedCount = (try? database.indexedCount()) ?? 0
-        if indexedCount == 0 {
-            status = "正在建立首次索引…"
-            index(urls: urls)
-        } else {
-            status = "已恢复 \(indexedCount.formatted()) 个项目，实时监听中"
+        status = "已恢复索引目录，实时监听中"
+        let restoredURLs = urls
+        worker.async { [weak self] in
+            guard let self else { return }
+            let count = (try? self.database.indexedCount()) ?? 0
+            DispatchQueue.main.async {
+                guard self.watchedRoots == restoredURLs, !self.isIndexing else { return }
+                self.indexedCount = count
+                if count == 0 {
+                    self.status = "正在建立首次索引…"
+                    self.index(urls: restoredURLs)
+                } else {
+                    self.status = "已恢复 \(count.formatted()) 个项目，实时监听中"
+                }
+            }
         }
     }
 
